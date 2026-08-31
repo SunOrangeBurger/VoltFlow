@@ -9,3 +9,6 @@ uvicorn[standard]==0.30.5
 websockets==12.0
 requests==2.32.3
 pydantic==2.8.2
+tensorboard==2.17.0
+tqdm==4.66.5
+rich==13.8.1

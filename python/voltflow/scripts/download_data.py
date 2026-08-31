@@ -80,6 +80,13 @@ def transform_to_voltflow_schema(raw_dir: str, output_path: str) -> None:
     weather_madrid["dt_iso"] = pd.to_datetime(weather_madrid["dt_iso"], utc=True).dt.tz_localize(None)
     energy["time"] = pd.to_datetime(energy["time"], utc=True).dt.tz_localize(None)
 
+    # This dataset has ~2.2k rows where the same Madrid hour is reported
+    # twice with different simultaneous weather condition codes (e.g. rain +
+    # thunderstorm) but identical temp. Dedupe on timestamp before the merge
+    # below, or the inner join silently duplicates energy/price rows on
+    # those hours.
+    weather_madrid = weather_madrid.drop_duplicates(subset=["dt_iso"], keep="first")
+
     merged = pd.merge(
         energy[["time", "price actual"]],
         weather_madrid[["dt_iso", "temp"]],

@@ -54,12 +54,22 @@ kaggle.com.
    ```
    This downloads + merges the real Spain dataset into
    `data/raw/energy_weather_spain.csv`, replacing the synthetic placeholder.
-6. **Validate the real merged CSV** — the synthetic data was designed to
-   exercise the pipeline, not to resemble real Spanish market dynamics.
-   Once real data lands, re-check that price ranges roughly match the
-   normalization bounds assumed in spec 5.1 (`$-50$ to $300$/MWh`) — real
-   negative-price events in the actual dataset may be rarer/more extreme
-   than the synthetic generator's smooth sinusoidal model assumes.
+6. ~~Validate the real merged CSV~~ — **done**. Real data merged (35,064
+   rows). Confirmed prices are 9.33-116.80 EUR/MWh with zero negative-price
+   hours, well inside the old hardcoded -50/300 normalization bounds — this
+   was indeed the flattened-observation problem this item predicted, and has
+   been fixed (see progress.md "Real Spain dataset merged" entry): price
+   normalization bounds are now derived from the dataset at load time
+   instead of hardcoded. Needs `cargo test` re-run locally to confirm the
+   new tests pass (sandbox can't compile Rust).
+   - Minor follow-up, not blocking: patch the same dedup-before-merge fix
+     into `download_data.py` itself (currently only applied in the one-off
+     merge that produced the current CSV) so a future from-scratch Kaggle
+     download doesn't reintroduce the duplicate-row issue.
+7. ~~Thermal cooling capacity undersized for the cell's power rating~~ —
+   **done**. See progress.md item 6: `h*A` is now auto-derived from
+   `P_max`/climate instead of the spec's flat (and undersized) 25.0 W/K.
+   **Needs `cargo test` locally** — 5 new tests added, not yet run.
 
 ## Training (Phase 4, deferred)
 

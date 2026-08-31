@@ -68,11 +68,61 @@ pub struct BessSimulation {
     obs_scratch: [f32; 8],
 
     pub t_ambient_initial: f32,
+
+    // Price normalization bounds for the observation vector (spec 5.1).
+    // Derived from the loaded dataset itself at construction time rather
+    // than hardcoded, so the observation space actually spans [0,1] for
+    // whatever price distribution the CSV holds (see PRICE_NORM_PAD_FRAC
+    // doc comment below for why a fixed -50/300 range is wrong for real
+    // (non-negative, narrower-range) market data).
+    price_norm_min: f32,
+    price_norm_max: f32,
 }
+
+/// Fractional padding applied beyond the observed [min, max] price range
+/// when deriving normalization bounds, so prices during deployment/eval
+/// that exceed the training data's historical extremes still map inside
+/// (or close to) [0, 1] instead of immediately saturating at the clamp.
+const PRICE_NORM_PAD_FRAC: f32 = 0.15;
+
+/// Floor on the normalization span width, in $/MWh, to avoid a
+/// near-zero-width (or exactly zero, e.g. constant-price synthetic/test
+/// data) denominator collapsing the price observation to a single value.
+const PRICE_NORM_MIN_WIDTH: f32 = 10.0;
+
+/// Design safety margin (Kelvin) kept between the worst-case sustained
+/// steady-state cell temperature and `t_crit` when auto-sizing thermal
+/// cooling capacity (see `derive_h_times_a`). Chosen so short-term OU noise
+/// on ambient temp and transient overshoot before steady-state still don't
+/// routinely cross `t_crit` even during continuous max-power operation on
+/// the hottest day in the dataset.
+const THERMAL_SAFETY_MARGIN_K: f32 = 10.0;
+
+/// Absolute floor on the denominator used when deriving cooling capacity
+/// from `(t_crit - margin - max_ambient)`. Without this, a dataset whose
+/// hottest recorded ambient temperature sits within `THERMAL_SAFETY_MARGIN_K`
+/// of `t_crit` would drive the required h*A toward +infinity. Flooring here
+/// means the derived system is *undersized* for truly pathological climates
+/// rather than producing a nonsensical/infinite cooling requirement — this
+/// is a known, documented limitation rather than a silent failure.
+const THERMAL_MIN_HEADROOM_K: f32 = 5.0;
 
 impl BessSimulation {
     pub fn new(market: MarketData, max_steps: usize, seed: u64) -> Self {
         let rng = StdRng::seed_from_u64(seed);
+
+        let (price_norm_min, price_norm_max) = Self::derive_price_norm_bounds(&market.prices);
+
+        let cell_params = CellParams::default();
+        let financial_params = FinancialParams::default();
+        let mut thermal_params = ThermalParams::default();
+        thermal_params.h_times_a = Self::derive_h_times_a(
+            &cell_params,
+            &thermal_params,
+            &market.ambient_temps_k,
+            financial_params.t_crit,
+        );
+
         Self {
             soc: 0.5,
             soh: 1.0,
@@ -80,17 +130,110 @@ impl BessSimulation {
             current_step: 0,
             episode_start_idx: 0,
             max_steps,
-            cell_params: CellParams::default(),
-            thermal_params: ThermalParams::default(),
+            cell_params,
+            thermal_params,
             degradation_params: DegradationParams::default(),
-            financial_params: FinancialParams::default(),
+            financial_params,
             market,
             price_noise: OuNoise::new(0.3, 0.0, 3.0),
             temp_noise: OuNoise::new(0.2, 0.0, 0.5),
             rng,
             obs_scratch: [0.0; 8],
             t_ambient_initial: 288.15,
+            price_norm_min,
+            price_norm_max,
         }
+    }
+
+    /// Auto-sizes thermal cooling capacity (`h*A`, W/K) from the cell's own
+    /// power rating and the actual ambient-temperature data being trained
+    /// on, rather than using the spec's flat 25.0 W/K default.
+    ///
+    /// KNOWN SPEC DEVIATION: the spec's default h*A = 25.0 W/K is sized for
+    /// a much smaller system than its own P_max = 500kW implies. At just
+    /// half power (250kW action), the resulting resistive heating pushes
+    /// the steady-state cell temperature ~54K above ambient, and a single
+    /// 15-minute step already covers ~78% of that rise — so almost any
+    /// nontrivial charge/discharge blows past T_crit (318.15K/45°C) inside
+    /// one step. The resulting kappa*(T-T_crit)^2 penalty then outweighs
+    /// revenue by 3-4 orders of magnitude (confirmed empirically: a single
+    /// half-power step produced a thermal penalty of ~24,000 against
+    /// revenue of ~-3), which would train PPO into a degenerate
+    /// never-act-at-any-price policy rather than an arbitrage strategy.
+    /// This isn't a training-data problem, it's a reward-shape problem, so
+    /// it's fixed at the parameter level rather than patched over with
+    /// reward reweighting.
+    ///
+    /// Fix: size h*A so that *continuous, sustained* operation at max power
+    /// (the worst case — the discharge branch, where inverter loss means
+    /// pack-side P_eff exceeds P_max; see `cell::effective_power_kw`) on the
+    /// *hottest ambient temperature actually present in the loaded dataset*
+    /// settles at steady-state `THERMAL_SAFETY_MARGIN_K` below `t_crit`,
+    /// with `THERMAL_MIN_HEADROOM_K` as a floor against pathological (very
+    /// hot climate) inputs. This is deliberately data- and rating-driven
+    /// rather than a second hardcoded constant: swap in a different power
+    /// rating, cell chemistry, or climate later and the cooling capacity
+    /// re-derives itself correctly instead of needing to be hand-retuned —
+    /// the same principle as `derive_price_norm_bounds` above.
+    fn derive_h_times_a(
+        cell: &CellParams,
+        thermal: &ThermalParams,
+        ambient_temps_k: &[f32],
+        t_crit: f32,
+    ) -> f32 {
+        let eta_safe = cell.inverter_eta.max(1e-6);
+        // Worst-case sustained pack-side power: the discharge branch divides
+        // by eta (loss), so |P_eff| > P_max there, unlike the charge branch.
+        let p_eff_max_kw = cell.max_power_kw / eta_safe;
+        let q_gen_max_w = heat_generated_w(p_eff_max_kw, thermal.v_nominal, thermal.r_internal);
+
+        let max_ambient_k = ambient_temps_k
+            .iter()
+            .copied()
+            .fold(f32::NEG_INFINITY, f32::max);
+        // Fall back to a standard-conditions ambient (25C) if no data was
+        // loaded (e.g. constructed with an empty MarketData in a test).
+        let max_ambient_k = if max_ambient_k.is_finite() {
+            max_ambient_k
+        } else {
+            298.15
+        };
+
+        let headroom_k =
+            (t_crit - THERMAL_SAFETY_MARGIN_K - max_ambient_k).max(THERMAL_MIN_HEADROOM_K);
+
+        q_gen_max_w / headroom_k
+    }
+
+    /// Computes [min, max] observation-normalization bounds from the actual
+    /// price series, padded by PRICE_NORM_PAD_FRAC on each side and floored
+    /// to PRICE_NORM_MIN_WIDTH total span. Falls back to the spec's original
+    /// -50.0/300.0 bounds if `prices` is empty (shouldn't happen in practice
+    /// — the loader errors on an empty CSV — but keeps this fn total).
+    fn derive_price_norm_bounds(prices: &[f32]) -> (f32, f32) {
+        if prices.is_empty() {
+            return (-50.0, 300.0);
+        }
+        let mut min = f32::INFINITY;
+        let mut max = f32::NEG_INFINITY;
+        for &p in prices {
+            if p < min {
+                min = p;
+            }
+            if p > max {
+                max = p;
+            }
+        }
+        let range = max - min;
+        let pad = (range * PRICE_NORM_PAD_FRAC).max(0.0);
+        let mut lo = min - pad;
+        let mut hi = max + pad;
+        if hi - lo < PRICE_NORM_MIN_WIDTH {
+            let mid = (hi + lo) / 2.0;
+            lo = mid - PRICE_NORM_MIN_WIDTH / 2.0;
+            hi = mid + PRICE_NORM_MIN_WIDTH / 2.0;
+        }
+        (lo, hi)
     }
 
     /// Resets episode state. If `randomize` is true, picks a random start
@@ -242,8 +385,9 @@ impl BessSimulation {
         self.obs_scratch[1] = ((self.soh - 0.7) / 0.3).clamp(-1.0, 1.0);
         self.obs_scratch[2] = ((self.t_cell - 273.15) / 60.0).clamp(-1.0, 1.0);
         self.obs_scratch[3] = ((t_ambient - 263.15) / 55.0).clamp(-1.0, 1.0);
-        self.obs_scratch[4] = ((price_t.clamp(-50.0, 300.0) + 50.0) / 350.0).clamp(0.0, 1.0);
-        self.obs_scratch[5] = ((price_t1.clamp(-50.0, 300.0) + 50.0) / 350.0).clamp(0.0, 1.0);
+        let price_span = (self.price_norm_max - self.price_norm_min).max(1e-6);
+        self.obs_scratch[4] = ((price_t - self.price_norm_min) / price_span).clamp(0.0, 1.0);
+        self.obs_scratch[5] = ((price_t1 - self.price_norm_min) / price_span).clamp(0.0, 1.0);
         self.obs_scratch[6] = (2.0 * PI * hour / 24.0).sin();
         self.obs_scratch[7] = (2.0 * PI * hour / 24.0).cos();
 
@@ -312,5 +456,166 @@ mod tests {
             truncated = trunc;
         }
         assert!(truncated);
+    }
+
+    // --- Dynamic price normalization (replaces old hardcoded -50/300) ---
+
+    #[test]
+    fn price_norm_bounds_derived_from_data_not_hardcoded() {
+        // Real-world-shaped price series: always positive, narrow range
+        // (like the merged Spain dataset: ~9 to ~117 EUR/MWh), nothing
+        // close to the old spec's -50/300 assumption.
+        let prices: Vec<f32> = (0..1000).map(|i| 9.0 + (i % 108) as f32).collect();
+        let (lo, hi) = BessSimulation::derive_price_norm_bounds(&prices);
+        // Bounds should track the real data (with padding), not the old
+        // fixed constants.
+        assert!(lo > -50.0, "lower bound should not fall back to -50.0, got {lo}");
+        assert!(hi < 300.0, "upper bound should not fall back to 300.0, got {hi}");
+        assert!(lo < 9.0 && hi > 116.0, "padding should extend past observed min/max");
+    }
+
+    #[test]
+    fn price_norm_bounds_have_min_width_for_constant_price_series() {
+        // Degenerate case: every price identical (range = 0). Bounds must
+        // not collapse to zero width and divide-by-near-zero in the
+        // observation calc.
+        let prices = vec![42.0_f32; 100];
+        let (lo, hi) = BessSimulation::derive_price_norm_bounds(&prices);
+        assert!(hi - lo >= PRICE_NORM_MIN_WIDTH - 1e-3);
+        assert!(lo < 42.0 && hi > 42.0);
+    }
+
+    #[test]
+    fn price_norm_bounds_fall_back_on_empty_prices() {
+        let (lo, hi) = BessSimulation::derive_price_norm_bounds(&[]);
+        assert_eq!((lo, hi), (-50.0, 300.0));
+    }
+
+    #[test]
+    fn observation_price_fields_stay_in_unit_range_for_real_shaped_data() {
+        // Regression test for the normalization bug: with real (non-negative,
+        // ~9-117 EUR/MWh) price data, obs[4]/obs[5] must actually span a
+        // meaningful chunk of [0, 1], not sit compressed near ~0.2 as they
+        // would under the old fixed -50/300 mapping.
+        let n = 2000;
+        let market = MarketData {
+            prices: (0..n).map(|i| 9.33 + (i % 108) as f32).collect(),
+            ambient_temps_k: vec![288.15; n],
+            solar_irradiance: vec![0.0; n],
+        };
+        let mut sim = BessSimulation::new(market, 500, 7);
+        let obs = sim.reset(false);
+        assert!(obs[4] >= 0.0 && obs[4] <= 1.0);
+        assert!(obs[5] >= 0.0 && obs[5] <= 1.0);
+        // Sweep steps and confirm the price observation actually uses a wide
+        // span of [0,1] (i.e. isn't collapsed into a narrow sliver).
+        let mut min_seen = f32::INFINITY;
+        let mut max_seen = f32::NEG_INFINITY;
+        for _ in 0..300 {
+            let (obs, _, _, trunc, _) = sim.step(0.0);
+            min_seen = min_seen.min(obs[4]);
+            max_seen = max_seen.max(obs[4]);
+            if trunc {
+                break;
+            }
+        }
+        assert!(
+            max_seen - min_seen > 0.5,
+            "price observation span too narrow: {min_seen}..{max_seen}"
+        );
+    }
+
+    // --- Auto-sized thermal cooling capacity (replaces flat 25.0 W/K default) ---
+
+    #[test]
+    fn h_times_a_scales_up_from_spec_default_for_rated_power() {
+        // The spec's flat 25.0 W/K default is undersized for a 500kW-rated
+        // cell (see derive_h_times_a doc comment). The derived value for a
+        // reasonable (non-pathological) ambient must be well above it.
+        let cell = CellParams::default();
+        let thermal = ThermalParams::default();
+        let ambient = vec![288.15_f32; 100]; // 15C, comfortable margin below t_crit
+        let h = BessSimulation::derive_h_times_a(&cell, &thermal, &ambient, 318.15);
+        assert!(
+            h > thermal.h_times_a * 5.0,
+            "derived h*A ({h}) should be substantially above the spec's \
+             undersized 25.0 W/K default for a 500kW-rated cell"
+        );
+    }
+
+    #[test]
+    fn h_times_a_increases_with_hotter_observed_ambient() {
+        // Same power rating, hotter climate -> less headroom to t_crit ->
+        // more cooling capacity required. Directionally this must increase,
+        // not stay fixed (which a hardcoded constant would do regardless of
+        // the data it's paired with).
+        let cell = CellParams::default();
+        let thermal = ThermalParams::default();
+        let cool_ambient = vec![273.15_f32; 50]; // 0C
+        let hot_ambient = vec![308.15_f32; 50]; // 35C
+        let h_cool = BessSimulation::derive_h_times_a(&cell, &thermal, &cool_ambient, 318.15);
+        let h_hot = BessSimulation::derive_h_times_a(&cell, &thermal, &hot_ambient, 318.15);
+        assert!(
+            h_hot > h_cool,
+            "hotter climate should require more cooling capacity: cool={h_cool}, hot={h_hot}"
+        );
+    }
+
+    #[test]
+    fn h_times_a_respects_min_headroom_floor_on_pathological_climate() {
+        // Ambient right at t_crit itself is a pathological/degenerate input
+        // (headroom would be negative or zero without a floor). Must not
+        // divide by zero or go negative/infinite.
+        let cell = CellParams::default();
+        let thermal = ThermalParams::default();
+        let extreme_ambient = vec![318.15_f32; 10]; // == t_crit itself
+        let h = BessSimulation::derive_h_times_a(&cell, &thermal, &extreme_ambient, 318.15);
+        assert!(h.is_finite() && h > 0.0);
+    }
+
+    #[test]
+    fn h_times_a_falls_back_to_standard_conditions_on_empty_ambient_data() {
+        let cell = CellParams::default();
+        let thermal = ThermalParams::default();
+        let h = BessSimulation::derive_h_times_a(&cell, &thermal, &[], 318.15);
+        assert!(h.is_finite() && h > 0.0);
+    }
+
+    #[test]
+    fn sustained_max_power_stays_near_but_under_t_crit_with_derived_cooling() {
+        // The actual regression this whole fix targets: continuous discharge
+        // at rated max power (the worst case), on a dataset with a
+        // comfortable ambient margin, should settle close to
+        // (t_crit - THERMAL_SAFETY_MARGIN_K) at steady state, not blow
+        // straight through t_crit within a couple of steps the way the
+        // spec's flat 25.0 W/K default did.
+        let n = 5000;
+        let market = MarketData {
+            prices: vec![50.0; n],
+            ambient_temps_k: vec![288.15; n], // 15C
+            solar_irradiance: vec![0.0; n],
+        };
+        let mut sim = BessSimulation::new(market, 2000, 3);
+        sim.reset(false);
+        let mut last_t_cell = sim.t_cell;
+        for _ in 0..200 {
+            let (_, _, term, trunc, info) = sim.step(-1.0); // full discharge, worst case
+            last_t_cell = info.t_cell;
+            if term || trunc {
+                break;
+            }
+        }
+        // Should stabilize near t_crit - margin (308.15K), comfortably
+        // below t_crit (318.15K) itself, and not pinned at the hard
+        // physical clamp (373.15K/100C) the way the old params could drive
+        // it toward.
+        assert!(
+            last_t_cell < 318.15,
+            "steady-state temp under sustained max power should stay under t_crit, got {last_t_cell}"
+        );
+        assert!(
+            (last_t_cell - 308.15).abs() < 3.0,
+            "expected steady-state near t_crit - {THERMAL_SAFETY_MARGIN_K}K (308.15K), got {last_t_cell}"
+        );
     }
 }

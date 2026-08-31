@@ -147,6 +147,85 @@ unverified locally as of this update — see `to_be_done.md`.
    necessary for financial correctness — otherwise the ledger would count
    money for energy that was never actually stored/delivered.
 
+5. **Real Spain dataset merged, and a price-normalization bug found & fixed
+   as a direct result.** Real Kaggle `energy_dataset.csv` +
+   `weather_features.csv` merged into `data/raw/energy_weather_spain.csv`
+   (35,064 hourly rows, 2015-2018). Two issues surfaced:
+   - `weather_features.csv` has ~2,214 duplicate-timestamp rows for Madrid
+     (same hour reported twice under different simultaneous weather
+     condition codes, e.g. rain + thunderstorm, always with identical
+     `temp`). The repo's `download_data.py` merge doesn't dedupe before the
+     join, which would have silently duplicated energy rows on those hours.
+     Deduped on `dt_iso` (keep first) before merging; not yet patched back
+     into `download_data.py` itself (see to_be_done.md).
+   - Real prices are 9.33-116.80 EUR/MWh with **zero negative-price hours**,
+     far narrower than the -50/300 EUR/MWh range spec 5.1's observation
+     normalization assumed (`simulation.rs` had this hardcoded). Under the
+     old fixed bounds, obs[4]/obs[5] (price) would have sat compressed in
+     roughly [0.17, 0.33] of the [0,1] range for all of training —
+     flattening the gradient signal the policy gets on price, which is the
+     single most important input for an arbitrage task. Confirmed this was
+     the exact risk `to_be_done.md` item 6 called out.
+   - **Fixed**: `simulation.rs` now derives price normalization bounds from
+     the loaded dataset itself at construction (`derive_price_norm_bounds`),
+     padded 15% beyond the observed min/max (so future/deployment prices
+     outside the training range don't immediately saturate the clamp), with
+     a 10 EUR/MWh floor on span width to avoid a near-zero-width denominator
+     on degenerate (e.g. constant-price) data. Covered by four new tests in
+     `simulation.rs` (`price_norm_bounds_derived_from_data_not_hardcoded`,
+     `price_norm_bounds_have_min_width_for_constant_price_series`,
+     `price_norm_bounds_fall_back_on_empty_prices`,
+     `observation_price_fields_stay_in_unit_range_for_real_shaped_data`).
+     **Not yet run** — needs `cargo test` on real hardware, same sandbox
+     limitation as before.
+   - `solar_irradiance` confirmed dead: loaded by `loader.rs` but never read
+     by `simulation.rs` or `thermal.rs`. Defaulting it to 0.0 (Kaggle Spain
+     dataset has no irradiance column) is a non-issue, not a shortcut.
+
+6. **Thermal cooling capacity was undersized relative to the cell's own
+   power rating — found via a manual smoke test against real data, fixed at
+   the parameter-derivation level.** After wiring up the built extension
+   and running one manual step (`action=0.5` on the real dataset), the
+   thermal penalty came back ~24,000 against revenue of ~-3 — a single
+   half-power 15-minute step pushed `t_cell` from 298.15K to ~344K.
+   Traced to the spec's own default `h*A = 25.0 W/K` (section 4.2): at the
+   spec's own `P_max = 500kW` (section 4.1), even 250kW of resistive
+   heating produces a 54K steady-state rise above ambient, ~78% reached
+   within a single 15-min step, so almost any nontrivial action blows past
+   `T_crit = 318.15K` and the resulting `kappa*(T-T_crit)^2` penalty
+   dwarfs revenue by 3-4 orders of magnitude — this would have trained PPO
+   into a degenerate "never act at any price" policy, and Gate 3's
+   idle-above-75th-percentile check would have trivially "passed" for the
+   wrong reason.
+   - **Fixed**: `simulation.rs::derive_h_times_a` now auto-sizes `h*A` from
+     the cell's own rated power (worst case: the discharge branch, where
+     inverter loss makes pack-side `P_eff > P_max`) and the hottest ambient
+     temperature actually present in the loaded dataset, targeting a
+     `THERMAL_SAFETY_MARGIN_K = 10.0` buffer below `T_crit` at steady
+     state under continuous max-power operation (floored at
+     `THERMAL_MIN_HEADROOM_K = 5.0` for pathologically hot climates so the
+     derivation can't blow up toward infinity). Same principle as the price
+     normalization fix above: derived from the actual rating/data instead
+     of a second hardcoded constant, so it re-derives correctly if the
+     power rating, cell chemistry, or climate changes later instead of
+     needing to be hand-retuned again.
+   - 5 new unit tests in `simulation.rs`
+     (`h_times_a_scales_up_from_spec_default_for_rated_power`,
+     `h_times_a_increases_with_hotter_observed_ambient`,
+     `h_times_a_respects_min_headroom_floor_on_pathological_climate`,
+     `h_times_a_falls_back_to_standard_conditions_on_empty_ambient_data`,
+     `sustained_max_power_stays_near_but_under_t_crit_with_derived_cooling`).
+     **Not yet run** — needs `cargo test` on real hardware.
+   - Not touched: `C_thermal`, `V_nominal`, `R_internal` — these are
+     intrinsic cell/thermal-mass properties, not a cooling-system design
+     choice, so left at spec defaults.
+
+7. **`requirements.txt` was missing two runtime deps `train_ppo.py`
+   actually needs** — found by just running it. `tensorboard_log` is passed
+   to SB3 unconditionally, and `progress_bar=True` is hardcoded in
+   `model.learn(...)`, but neither `tensorboard` nor `tqdm`/`rich` were
+   pinned. Added `tensorboard==2.17.0`, `tqdm==4.66.5`, `rich==13.8.1`.
+
 ## Files not yet delivered as downloads
 
 None outstanding as of this update — full tree is ready to present.

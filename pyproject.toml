@@ -22,5 +22,4 @@ dependencies = [
 
 [tool.maturin]
 manifest-path = "crates/voltflow_core/Cargo.toml"
-python-source = "python"
 module-name = "voltflow_core"
