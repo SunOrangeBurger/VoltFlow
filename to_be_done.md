@@ -1,100 +1,99 @@
 # VoltFlow — To Be Done
 
-Things explicitly **not** completed in the initial build pass, in rough
-priority order. This is scope you (or a future agent session) need to pick
-up locally, since this sandbox has no Rust toolchain and can't reach
-kaggle.com.
+Things still outstanding after the first full training pass. Rust
+toolchain, Python venv, `maturin develop --release`, and a full
+2,000,000-timestep PPO run have all now happened on real (GPU) hardware —
+the items below are what's left, in rough priority order.
 
-## Blocking (must do before anything else works)
+## Locked sequence — STATUS: steps 1-4 all complete. Frontend is unblocked.
 
-1. **Install Rust toolchain locally** (`rustup`, stable 1.78+) — done if
-   you're reading this after a successful `cargo test` run.
-2. ~~Run `cargo test` inside `crates/voltflow_core/`~~ — **done**, 17/17
-   passing. Along the way this surfaced and fixed a real numerical
-   instability bug in the thermal model (see `progress.md` deviation #3) —
-   worth reading if you're curious why cell temperatures behave the way
-   they do near the 15-min timestep boundary. The Gate 2 discrepancy
-   (spec prose said ~96% for discharge) is also resolved, no action needed.
-3. **Build the Python venv with `uv`, then run `maturin develop --release`.**
-   Use `uv venv --python 3.11 .venv` (this sandbox's Python is 3.12, and
-   the pinned `torch==2.4.0`/`stable-baselines3==2.3.2` may lack 3.12
-   wheels — 3.11 is safer). **Important:** `cargo`/pyo3's build script
-   resolves whichever `python3` is first on `PATH` at build time, which may
-   NOT be your venv's interpreter even if the venv is activated, especially
-   on systems where a newer system Python (e.g. 3.14) shadows it. If you
-   hit an error like `the configured Python interpreter version (3.14) is
-   newer than PyO3's maximum supported version`, explicitly set:
-   ```bash
-   export PYO3_PYTHON=$(pwd)/.venv/bin/python3
-   cargo clean   # clears stale build config cached against the wrong interpreter
-   ```
-   before retrying `cargo test` or `maturin develop --release`. Keep
-   `PYO3_PYTHON` exported for the rest of the session.
-4. **Run `cargo bench` and check Gate 1** (>2M steps/sec across 4 threads).
-   Not yet run as of this update. If it doesn't hit that bar, the likely
-   culprits are the `StdRng` reseeding per parallel task in the bench
-   (currently constructs a fresh `BessSimulation` per thread per bench
-   iteration, somewhat unfair to steady-state throughput) — consider
-   restructuring the bench to reuse simulation instances across `iter()`
-   calls if the number looks low.
-5. **Verify the FastAPI server actually finds the `voltflow` package.**
-   `voltflow.server.app` lives at `python/voltflow/server/app.py`, so
-   running `uvicorn voltflow.server.app:app` from the repo root will fail
-   with a `ModuleNotFoundError` unless you either run it with
-   `--app-dir python`, or `pip install -e .` the package first. Not yet
-   tested locally — flagging before you hit it.
+The walk-forward CV sweep is done: 15/15 runs succeeded (3 folds x 5 seeds),
+each benchmarked only on its own fold's held-out year. Full results in
+`benchmark_results_cv_summary.md` and per-run detail in `results/cv/*.md`.
 
+**Result: PPO beats both heuristics on every single one of the 15 runs.**
+Worst case (fold3 seed2): +136.8% over the best heuristic that year. Best
+case (fold1 seed1): +476.4%. Gate 4's >=15% target is cleared by a wide
+margin in every run, not just on average.
 
-## Data
+| Fold | Train years | Eval year | Net PnL mean+/-std ($) | Min | Max |
+|---|---|---|---|---|---|
+| fold1 | 2015 | 2016 | 421.90+/-11.01 | 402.60 | 432.72 |
+| fold2 | 2015-2016 | 2017 | 325.27+/-47.47 | 275.46 | 386.94 |
+| fold3 | 2015-2017 | 2018 | 331.13+/-29.11 | 285.10 | 369.95 |
 
-5. **Get a Kaggle API token** (kaggle.com/settings → API → Create New
-   Token), place at `~/.kaggle/kaggle.json`, then run:
-   ```
-   python python/voltflow/scripts/download_data.py
-   ```
-   This downloads + merges the real Spain dataset into
-   `data/raw/energy_weather_spain.csv`, replacing the synthetic placeholder.
-6. ~~Validate the real merged CSV~~ — **done**. Real data merged (35,064
-   rows). Confirmed prices are 9.33-116.80 EUR/MWh with zero negative-price
-   hours, well inside the old hardcoded -50/300 normalization bounds — this
-   was indeed the flattened-observation problem this item predicted, and has
-   been fixed (see progress.md "Real Spain dataset merged" entry): price
-   normalization bounds are now derived from the dataset at load time
-   instead of hardcoded. Needs `cargo test` re-run locally to confirm the
-   new tests pass (sandbox can't compile Rust).
-   - Minor follow-up, not blocking: patch the same dedup-before-merge fix
-     into `download_data.py` itself (currently only applied in the one-off
-     merge that produced the current CSV) so a future from-scratch Kaggle
-     download doesn't reintroduce the duplicate-row issue.
-7. ~~Thermal cooling capacity undersized for the cell's power rating~~ —
-   **done**. See progress.md item 6: `h*A` is now auto-derived from
-   `P_max`/climate instead of the spec's flat (and undersized) 25.0 W/K.
-   **Needs `cargo test` locally** — 5 new tests added, not yet run.
+Overall across all 15 runs: mean net PnL $359.44 +/- $55.05.
 
-## Training (Phase 4, deferred)
+Notable: the two heuristics are *not* consistently ranked across years
+(Threshold Rule: $75->$43->$39 across 2016/17/18; TOU: $44->$102->$120,
+opposite trend) -- PPO stays in a much tighter $275-433 band regardless of
+which heuristic happens to be stronger that year. This is a stronger
+generalization signal than beating any single fixed baseline.
 
-7. **Smoke-test PPO training** with a short run first:
-   ```
-   python -m voltflow.models.train_ppo --timesteps 50000 --n-envs 2
-   ```
-   before committing to the full 2,000,000-step run (spec Phase 4). Expect
-   this to take hours on CPU; a GPU with `torch` CUDA build will help but
-   SB3's default MlpPolicy is small enough that CPU is often fine too.
-8. **Verify Gate 3**: after training, check whether the agent learns to
-   idle/discharge instead of charge when price (obs index 4, normalized)
-   exceeds roughly the 75th percentile of observed prices. No automated
-   test for this yet — would be worth adding one that loads a checkpoint,
-   replays a fixed price trace, and asserts the correlation.
-9. **Run `run_benchmarks.py` against a real trained checkpoint** to check
-   the >=15% net PnL improvement over both heuristics (Gate 4). The script
-   is written and will run against heuristics-only right now (no checkpoint
-   exists yet), but the RL comparison row won't appear until step 7-8 done.
+fold1's unusually tight spread (+/-11 vs +/-30-47 for fold2/fold3) is worth
+a mental flag, not an action item: trained on only one year of data, so a
+policy converging this consistently across seeds might mean 2016 was an
+easy/predictable eval year, or that a single training year offers less
+regime diversity, making seeds converge to a similar (possibly narrower)
+strategy. fold2/fold3, with 2-3 years of training data, show more
+seed-to-seed variance ($85-111 spread) which is arguably the more
+trustworthy read on real-world seed sensitivity. Not worth chasing further
+right now -- flagging for awareness only.
 
-## Frontend
+**Gate 3 verification — DONE, PASS.** Ran against `fold3_seed4`:
+mean action -0.9676 above the 75th percentile price ($186.67/MWh, near-max
+discharge) vs. -0.2885 below it, only 0.3% of above-threshold steps showing
+any charging. Confirms genuine price-arbitrage behavior, independent
+evidence alongside the CV sweep's PnL dominance.
+
+**Confirmed checkpoint for frontend integration:
+`models/cv/ppo_voltflow_fold3_seed4.zip`** (best fold3 PnL at $369.95,
+Gate 3 verified, most training data / most recent held-out eval year).
+
+**Next: only after Gate 3 passes**, decide which checkpoint to wire into
+the frontend. Current leading candidate: `models/cv/ppo_voltflow_fold3_seed4.zip`.
+
+## Other blocking items (independent of the CV sweep, can be done in parallel)
+
+5. **Run `cargo bench` and check Gate 1** (>2M steps/sec across 4 threads).
+   Still not run. If the number looks low, the likely culprit is the
+   `StdRng` reseeding per parallel task in the bench (currently constructs
+   a fresh `BessSimulation` per thread per bench iteration) — consider
+   restructuring to reuse simulation instances across `iter()` calls.
+6. **Verify the FastAPI server actually finds the `voltflow` package.**
+   `voltflow.server.app` lives at `python/voltflow/server/app.py`; running
+   `uvicorn voltflow.server.app:app` from repo root will fail with
+   `ModuleNotFoundError` unless run with `--app-dir python`, or after
+   `pip install -e .`. Point it at `models/cv/ppo_voltflow_fold3_seed4.zip`.
+
+## Data (minor, not blocking, can be done in parallel)
+
+7. **Patch the dedup-before-merge fix into `download_data.py` itself.**
+   Currently the fix (dedupe `weather_features.csv` on `dt_iso` before
+   joining) was only applied in the one-off merge that produced the
+   current `data/raw/energy_weather_spain.csv`. A future from-scratch
+   Kaggle re-download would reintroduce the duplicate-row issue unless
+   `download_data.py` is patched to do this itself.
+
+## Training follow-ups (after the CV sweep, not before)
+
+8. **Consider a hyperparameter-tuned run** once the CV sweep establishes a
+   generalization baseline. The current hyperparameters are spec defaults
+   (`lr=3e-4`, `n_steps=2048`, `batch_size=256`, `n_epochs=10`,
+   `gamma=0.99`), untuned. Only worth doing once the CV summary shows
+   *where* the policy struggles (which fold/year), so tuning targets a
+   real weakness instead of guessing.
+9. **Inspect per-run training curves** in `logs/cv/*/` (tensorboard) for
+   any fold/seed combos that failed to converge, not just the final
+   eval PnL — a policy that converges late or unstably is a different
+   problem than one that converges to a mediocre optimum.
+
+## Frontend (unblocked — CV sweep + Gate 3 both passed)
 
 10. **`npm install` inside `ui/`** and confirm the Next.js 14 app boots
-    (`npm run dev`) — untested in this session. Package versions were
-    hand-picked to match the spec's stated stack but not resolved/installed.
+    (`npm run dev`). Point `server/app.py` at
+    `models/cv/ppo_voltflow_fold3_seed4.zip` — not the original
+    single-seed `models/ppo_voltflow.zip`, which is now superseded.
 11. **Wire the WS URL for non-localhost deployments** — currently hardcoded
     default is `ws://localhost:8000/ws/telemetry`, overridable via
     `NEXT_PUBLIC_VOLTFLOW_WS_URL`. Fine for local dev, needs attention if
@@ -107,7 +106,7 @@ kaggle.com.
 ## Explicitly out of scope for this repo pass (not forgotten, just deferred)
 
 - CityLearn integration — rejected as a dataset/env source (see
-  progress.md), not revisited.
+  `progress.md`), not revisited.
 - Any cloud deployment (Docker, k8s, CI/CD) — spec never asked for this,
   only local runnability.
 - Multi-battery / fleet-level dispatch — spec is single-BESS throughout.

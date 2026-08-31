@@ -1,1 +1,26 @@
 /target
+
+# Trained model checkpoints — regenerate locally via train_ppo.py, don't commit binaries
+/models/
+*.zip
+
+# data/raw/energy_weather_spain.csv is the *active* dataset the pipeline reads —
+# it's whatever you last generated (synthetic) or downloaded (real Kaggle data),
+# so it's gitignored to avoid committing licensed data or silently overwriting
+# a teammate's real download with synthetic placeholder data (or vice versa).
+# A frozen synthetic sample IS tracked separately, see data/raw/energy_weather_spain.synthetic_sample.csv
+/data/raw/energy_weather_spain.csv
+/data/raw/_kaggle_download/
+
+# Training logs
+/logs/
+/crates/voltflow_core/target/
+
+# Python/venv
+.venv/
+__pycache__/
+*.pyc
+
+# Frontend
+/ui/node_modules/
+/ui/.next/
