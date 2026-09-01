@@ -77,15 +77,23 @@ Last updated 2026-09-01, after running the Gate 1 throughput benchmark and compl
 - **Pending:** Patch not yet applied to `download_data.py` itself
 - **Priority:** Low (current CSV works, future downloads would need fix)
 
+### 6. Thermal Safety Envelope Under Adversarial Discharge ⚠️ DOCUMENTED, HARD ENFORCEMENT PLANNED
+- **What we did:** Built `python/voltflow/scripts/stress_test.py` to force adversarial actions (sustained max discharge, sustained max charge, rapid +1/-1 oscillation) through the live simulation loop across 30 random-start episodes sampled from the full dataset, plus a separate check of the trained policy's behavior at the top 1% price tail. This goes beyond the existing unit tests, which check `clamp_soc`/`step_temperature` in isolation rather than under adversarial full-episode conditions. Full results: [results/stress_test.md](./results/stress_test.md).
+- **What we found:** SoC held as a true hard constraint in all scenarios — 0 violations across 8640 forced-action steps, `clamp_soc` enforces it physically every step. Thermal is currently a **soft constraint only** (enforced via the `kappa*(T-T_crit)^2` reward penalty, not a physical interlock): under sustained forced max discharge, 7 of 2880 steps (0.24%) exceeded `T_crit` (318.15K), peaking at 319.58K (1.43K over).
+- **Root cause:** `derive_h_times_a` sizes cooling capacity against the *historical* hottest ambient in the loaded CSV, with a 10K margin. Live simulation adds OU noise on top of historical ambient (`env/stochastic.rs`), so simulated ambient can occasionally exceed the historical max the cooling system was sized against, eating into that margin.
+- **Why this doesn't affect existing Gate results:** the price-spike-response part of the same stress test confirms the *trained* policy never sustains max discharge long enough to trigger this — it moderates in response to the thermal penalty well before T_crit, which is exactly the arbitrage behavior Gate 3 measures. The breach only appears under forced adversarial actions no trained policy here has been observed to take.
+- **Long-term fix (not yet implemented):** add a real hard thermal interlock — clamp/override the requested action when the *predicted* post-step temperature would exceed `T_crit`, the same enforcement pattern `clamp_soc` already uses for SoC, rather than relying solely on the reward penalty to discourage it. This requires a Rust change (predict-then-clamp in `env/simulation.rs`'s step function) and a full retrain to confirm PPO still learns useful arbitrage behavior under the added constraint (~2 hours for the full 15-fold CV sweep on current hardware).
+- **Priority:** Medium. Not a blocker — the soft constraint has never been breached by any trained policy in this project, only by intentionally adversarial forced actions designed to find this. Tracked here as a known, quantified limitation rather than left undiscovered.
+
 ## Remaining Tasks
 
 ### High Priority
-1. **Verify FastAPI server package discovery** - Ensure `--app-dir python` or `pip install -e .` works
-2. **Point dashboard at a validated checkpoint** - Train/reproduce `models/cv/ppo_voltflow_fold3_seed4.zip` locally via the CV sweep command (not committed — see Current Checkpoints above), or use the tracked `models/ppo_voltflow.zip` for a quick, non-CV-validated smoke test
+1. **Fix Python package discovery** - Add `python-source = "python"` to `[tool.maturin]` in `pyproject.toml`, re-run `maturin develop --release`, confirm `python -m voltflow.models.train_ppo --help` works from repo root without `PYTHONPATH` set. This affects every script that does `from voltflow...` (train_ppo.py, run_benchmarks.py, verify_gate3.py, stress_test.py), not just the FastAPI server — confirmed by hitting `ModuleNotFoundError: No module named 'voltflow'` running stress_test.py fresh. Once confirmed, simplify the `--app-dir python` workaround out of the README's dashboard instructions too.
+2. **Point dashboard at a validated checkpoint** - `models/cv/ppo_voltflow_fold3_seed4.zip` is now committed to the repo (previously gitignored under the blanket `/models/` rule — that rule has been narrowed). Update dashboard env var to use it instead of the smoke-test-only `ppo_voltflow.zip`.
 
 ### Medium Priority
-3. **Diagnose Gate 1 sub-linear thread scaling** - 4 threads measured ~1.6x single-thread throughput, not ~4x; profile whether this is benchmark-harness contention or a real bottleneck in the simulation core
-4. **Decide whether to commit a CV checkpoint** - Currently `models/` is fully gitignored; consider tracking just `ppo_voltflow_fold3_seed4.zip` (~50KB) if reviewers/judges need a working checkpoint without training locally
+3. **Add hard thermal interlock** - See "Known Specification Deviations #6": thermal is currently a soft (reward-penalty) constraint and can be breached by adversarial forced actions (confirmed via stress_test.py, not yet observed under any trained policy). Fix is a predict-then-clamp change in `env/simulation.rs`'s step function, same pattern as the existing SoC clamp, followed by a full CV retrain (~2 hours) to confirm PPO still learns useful arbitrage under the added constraint. Not a blocker for submission; tracked as a known, quantified, and deliberately deferred limitation.
+4. **Diagnose Gate 1 sub-linear thread scaling** - 4 threads measured ~1.6x single-thread throughput, not ~4x; profile whether this is benchmark-harness contention or a real bottleneck in the simulation core
 5. **Patch dedup fix into `download_data.py`** - For future Kaggle re-downloads
 6. **Run `npm install` / `npm run dev`** - Confirm dashboard boots
 7. **Configure WS URL for deployments** - Currently hardcoded to localhost
@@ -95,6 +103,7 @@ Last updated 2026-09-01, after running the Gate 1 throughput benchmark and compl
 9. **Training curve analysis** - Inspect tensorboard logs for convergence patterns
 10. **Mobile layout polish** - Basic Tailwind grid collapse exists, could be improved
 11. **Theme toggle** - Currently dark-only by design
+12. **Fix stale price-normalization constants in `verify_gate3.py`** - hardcodes the old -50/300 bounds to denormalize price for its printed EUR/MWh figure; doesn't invalidate the PASS/FAIL verdict (percentile grouping is invariant to affine rescaling) but the printed absolute price number is wrong. Cosmetic, low priority.
 
 ## Out of Scope (Explicitly Deferred)
 - CityLearn integration - Rejected as dataset/env source

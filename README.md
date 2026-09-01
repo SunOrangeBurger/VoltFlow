@@ -11,12 +11,15 @@ A high-throughput industrial Battery Energy Storage System (BESS) simulation and
 - **Gate 3 (Behavioral verification):** Agent learns price-threshold arbitrage (PASS)
 - **Gate 4 (Performance):** PPO beats heuristics by ≥15% net PnL across all 15 CV runs
 
-**Model checkpoints are not committed to this repo** (`models/` is gitignored by design — see [Training a Checkpoint](#4-train--benchmark) below to reproduce). Two example checkpoints from earlier single-seed runs are tracked for quick smoke-testing: `models/best_model.zip` and `models/ppo_voltflow.zip`. The CV-selected best policy (`ppo_voltflow_fold3_seed4`, referenced in [results/README.md](./results/README.md)) is reproducible via the CV sweep command below but is not itself included in the repo.
+**Model checkpoints:** the CV-selected best policy, `models/cv/ppo_voltflow_fold3_seed4.zip` (referenced throughout [results/README.md](./results/README.md)), is now committed to the repo. Two earlier single-seed checkpoints (`models/best_model.zip`, `models/ppo_voltflow.zip`) remain for quick smoke-testing.
+
+**Safety envelope, stress-tested:** SoC is a true hard constraint — confirmed to hold under adversarial forced actions with 0 violations across 8,640 stress-test steps. Thermal is currently a soft (reward-penalty) constraint and can be breached by up to 1.43K under sustained forced max-discharge (0.24% of stress-test steps) — never observed under any trained policy's actual behavior, but documented rather than left undiscovered. Full results: [results/stress_test.md](./results/stress_test.md); root cause and planned hard-interlock fix: [STATUS.md](./STATUS.md) deviation #6.
 
 **Documentation:**
 - **[TECHNICAL.md](./TECHNICAL.md)** - Complete mathematical specification & implementation details
 - **[STATUS.md](./STATUS.md)** - Project progress, known deviations, and remaining tasks
 - **[results/README.md](./results/README.md)** - Benchmark results and cross-validation summary
+- **[results/stress_test.md](./results/stress_test.md)** - Adversarial safety-envelope stress test results
 
 ## Quick Start
 
@@ -90,11 +93,8 @@ python python/voltflow/scripts/run_benchmarks.py \
 
 ```bash
 # Terminal 1: Telemetry backend
-# Use a checkpoint you've trained (step 4). For a quick smoke-test without
-# training, the tracked models/ppo_voltflow.zip works but is a single-seed
-# run, not the CV-validated best policy.
 export VOLTFLOW_CSV_PATH=data/raw/energy_weather_spain.csv
-export VOLTFLOW_PPO_MODEL=models/ppo_voltflow.zip
+export VOLTFLOW_PPO_MODEL=models/cv/ppo_voltflow_fold3_seed4.zip
 uvicorn voltflow.server.app:app --reload --port 8000 --app-dir python
 
 # Terminal 2: Frontend
