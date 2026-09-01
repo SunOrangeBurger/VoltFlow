@@ -32,4 +32,4 @@ codegen-units = 1
 # NOTE: panic="abort" intentionally omitted here (spec listed it, but it breaks
 # `cargo test` and the criterion bench harness, which both require unwinding).
 # The compiled PyO3 extension module still gets full opt-level/LTO/codegen-units
-# benefits without it. See progress.md for rationale.
+# benefits without it. See STATUS.md for rationale.

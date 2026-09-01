@@ -1,4 +1,4 @@
-//! Non-linear cycle + calendar aging degradation model (spec section 4.3).
+//! Non-linear cycle + calendar aging degradation model (TECHNICAL.md section 4.3).
 
 #[derive(Debug, Clone, Copy)]
 pub struct DegradationParams {

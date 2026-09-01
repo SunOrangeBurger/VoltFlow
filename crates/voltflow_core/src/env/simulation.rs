@@ -1,4 +1,4 @@
-//! Core Gym-style step/reset state machine (spec sections 4, 5).
+//! Core Gym-style step/reset state machine (TECHNICAL.md sections 4, 5).
 //!
 //! All buffers (prices, temps, obs scratch) are pre-allocated at construction
 //! time; `step()` performs zero heap allocation in steady state (agent rule 2).
@@ -69,7 +69,7 @@ pub struct BessSimulation {
 
     pub t_ambient_initial: f32,
 
-    // Price normalization bounds for the observation vector (spec 5.1).
+    // Price normalization bounds for the observation vector (TECHNICAL.md 5.1).
     // Derived from the loaded dataset itself at construction time rather
     // than hardcoded, so the observation space actually spans [0,1] for
     // whatever price distribution the CSV holds (see PRICE_NORM_PAD_FRAC
@@ -147,9 +147,9 @@ impl BessSimulation {
 
     /// Auto-sizes thermal cooling capacity (`h*A`, W/K) from the cell's own
     /// power rating and the actual ambient-temperature data being trained
-    /// on, rather than using the spec's flat 25.0 W/K default.
+    /// on, rather than using the TECHNICAL.md's flat 25.0 W/K default.
     ///
-    /// KNOWN SPEC DEVIATION: the spec's default h*A = 25.0 W/K is sized for
+    /// KNOWN SPEC DEVIATION: the TECHNICAL.md's default h*A = 25.0 W/K is sized for
     /// a much smaller system than its own P_max = 500kW implies. At just
     /// half power (250kW action), the resulting resistive heating pushes
     /// the steady-state cell temperature ~54K above ambient, and a single
@@ -207,7 +207,7 @@ impl BessSimulation {
 
     /// Computes [min, max] observation-normalization bounds from the actual
     /// price series, padded by PRICE_NORM_PAD_FRAC on each side and floored
-    /// to PRICE_NORM_MIN_WIDTH total span. Falls back to the spec's original
+    /// to PRICE_NORM_MIN_WIDTH total span. Falls back to the TECHNICAL.md's original
     /// -50.0/300.0 bounds if `prices` is empty (shouldn't happen in practice
     /// — the loader errors on an empty CSV — but keeps this fn total).
     fn derive_price_norm_bounds(prices: &[f32]) -> (f32, f32) {
@@ -368,7 +368,7 @@ impl BessSimulation {
         idx.min(self.market.prices.len() - 1)
     }
 
-    /// Builds the 8-element normalized observation vector per spec section 5.1.
+    /// Builds the 8-element normalized observation vector per TECHNICAL.md section 5.1.
     fn compute_observation(&mut self) -> [f32; 8] {
         let idx = self.current_market_idx();
         let next_idx = self.next_market_idx();
@@ -464,7 +464,7 @@ mod tests {
     fn price_norm_bounds_derived_from_data_not_hardcoded() {
         // Real-world-shaped price series: always positive, narrow range
         // (like the merged Spain dataset: ~9 to ~117 EUR/MWh), nothing
-        // close to the old spec's -50/300 assumption.
+        // close to the old TECHNICAL.md's -50/300 assumption.
         let prices: Vec<f32> = (0..1000).map(|i| 9.0 + (i % 108) as f32).collect();
         let (lo, hi) = BessSimulation::derive_price_norm_bounds(&prices);
         // Bounds should track the real data (with padding), not the old
@@ -528,8 +528,8 @@ mod tests {
     // --- Auto-sized thermal cooling capacity (replaces flat 25.0 W/K default) ---
 
     #[test]
-    fn h_times_a_scales_up_from_spec_default_for_rated_power() {
-        // The spec's flat 25.0 W/K default is undersized for a 500kW-rated
+    fn h_times_a_scales_up_from_technical_default_for_rated_power() {
+        // The TECHNICAL.md's flat 25.0 W/K default is undersized for a 500kW-rated
         // cell (see derive_h_times_a doc comment). The derived value for a
         // reasonable (non-pathological) ambient must be well above it.
         let cell = CellParams::default();
@@ -538,7 +538,7 @@ mod tests {
         let h = BessSimulation::derive_h_times_a(&cell, &thermal, &ambient, 318.15);
         assert!(
             h > thermal.h_times_a * 5.0,
-            "derived h*A ({h}) should be substantially above the spec's \
+            "derived h*A ({h}) should be substantially above the TECHNICAL.md's \
              undersized 25.0 W/K default for a 500kW-rated cell"
         );
     }
@@ -588,7 +588,7 @@ mod tests {
         // comfortable ambient margin, should settle close to
         // (t_crit - THERMAL_SAFETY_MARGIN_K) at steady state, not blow
         // straight through t_crit within a couple of steps the way the
-        // spec's flat 25.0 W/K default did.
+        // TECHNICAL.md's flat 25.0 W/K default did.
         let n = 5000;
         let market = MarketData {
             prices: vec![50.0; n],

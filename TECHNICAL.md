@@ -1,11 +1,21 @@
-# VoltFlow: Autonomous BESS Arbitrage & Degradation Management System
-## Technical Specification & Agent Implementation Blueprint
+# VoltFlow Technical Specification
+
+## Complete Mathematical & Implementation Reference
+
+## Navigation
+
+- [1. System Architecture](#1-system-architecture)
+- [2. Tech Stack & Dependencies](#2-tech-stack--dependencies)
+- [3. Project Structure](#3-project-structure)
+- [4. Mathematical Models](#4-mathematical-models)
+- [5. Observation & Action Spaces](#5-observation--action-spaces)
+- [6. Implementation Signatures](#6-implementation-signatures)
+- [7. Execution Phases](#7-execution-phases)
+- [8. Agent Instructions](#8-agent-instructions)
 
 ---
 
-## 1. Executive System Overview & Scope
-
-**VoltFlow** is an ultra-high-throughput Industrial Battery Energy Storage System (BESS) simulation and real-time dispatch optimization platform. 
+## 1. System Architecture 
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐

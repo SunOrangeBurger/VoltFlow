@@ -8,7 +8,7 @@
 //!
 //! See `data/raw/energy_weather_spain.csv` for the exact column names this
 //! loader expects, and README.md for where to obtain the real Kaggle dataset
-//! (see progress.md dataset section for schema mapping to the Kaggle source).
+//! (see STATUS.md dataset section for schema mapping to the Kaggle source).
 
 use csv::ReaderBuilder;
 use std::error::Error;

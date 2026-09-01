@@ -7,7 +7,7 @@ compute on a full PPO run, this script checks whether that's a one-step
 transient (temp settles toward some physically sane equilibrium under the
 analytic thermal solution) or an unbounded/runaway climb (a real bug,
 likely in thermal.rs's h*A / C_thermal parameters or the reward's kappa
-weighting -- see progress.md "Known Spec Deviations" #3 for the ODE fix
+weighting -- see STATUS.md "Known Specification Deviations" for the ODE fix
 this builds on).
 
 Also prints obs[2] -- the *normalized* T_cell observation fed to the PPO
@@ -16,8 +16,7 @@ things: t_cell_k/thermal_penalty/reward come straight from the `info`
 dict (raw physics, unaffected by the observation-normalization fix below),
 while obs[2] comes from `compute_observation()` (what the agent actually
 sees, and IS affected by that fix). After the fix documented in
-progress.md ("Local setup session" item 7, widening the normalization
-divisor from 60.0 to 100.0), obs[2] should track smoothly up toward 1.0
+STATUS.md (see "Known Specification Deviations"), obs[2] should track smoothly up toward 1.0
 rather than saturating as soon as t_cell crosses ~60C (333.15K), which is
 what the old spec-literal /60.0 divisor did. The direct check: compare
 obs[2] between the action=0.5 trace (peaks ~67C) and the action=0.8 trace

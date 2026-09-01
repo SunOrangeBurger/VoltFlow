@@ -1,6 +1,6 @@
 """Fetches and validates the real market/weather dataset for VoltFlow.
 
-DATASET DECISION (see progress.md for full rationale):
+DATASET DECISION (see STATUS.md for full rationale):
   Use ONLY the Kaggle "Energy Consumption, Generation, Prices and Weather"
   dataset (Spain, 2015-2018, hourly):
   https://www.kaggle.com/datasets/nicholasjhana/energy-consumption-generation-prices-and-weather

@@ -7,8 +7,8 @@ import voltflow_core
 class VoltFlowEnv(gym.Env):
     """Gymnasium adapter around the Rust `voltflow_core.RustBessEnv`.
 
-    Observation: 8-element normalized Box, see spec section 5.1.
-    Action: 1-element continuous Box in [-1.0, 1.0], see spec section 5.2.
+    Observation: 8-element normalized Box, see TECHNICAL.md section 5.1.
+    Action: 1-element continuous Box in [-1.0, 1.0], see TECHNICAL.md section 5.2.
     """
 
     metadata = {"render_modes": ["human"]}

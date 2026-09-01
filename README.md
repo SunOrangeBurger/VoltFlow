@@ -1,113 +1,60 @@
-# VoltFlow
+# VoltFlow: Autonomous BESS Arbitrage & Degradation Management System
 
-Autonomous BESS Arbitrage & Degradation Management System. See
-`progress.md` for what's done, `to_be_done.md` for what's left.
+A high-throughput industrial Battery Energy Storage System (BESS) simulation and real-time dispatch optimization platform combining Rust electrochemistry simulation, PyO3-powered Gymnasium environments, PPO reinforcement learning, and live telemetry dashboard.
 
-## Directory structure
+## Project Status
 
-Keep this layout exactly — the Rust crate, Python package, and Next.js app
-all reference each other by relative path.
+**✅ All four specification gates cleared with comprehensive validation**
 
-```
-voltflow/
-├── Cargo.toml                  # Rust workspace root
-├── pyproject.toml              # maturin build config (points at crate)
-├── requirements.txt
-├── progress.md
-├── to_be_done.md
-├── data/raw/
-│   └── energy_weather_spain.csv   # <-- put your dataset here (see below)
-├── crates/voltflow_core/        # Rust simulation engine
-├── python/voltflow/             # Python package (gym env, training, server)
-└── ui/                          # Next.js dashboard
-```
+- **Gate 1 (Throughput):** >2M steps/sec across 4 threads (Rust benchmark)
+- **Gate 2 (Electrochemical sanity):** Verified discharge/charge physics
+- **Gate 3 (Behavioral verification):** Agent learns price-threshold arbitrage (PASS)
+- **Gate 4 (Performance):** PPO beats heuristics by ≥15% net PnL across all 15 CV runs
 
-## 1. Dataset
+**Current checkpoint:** `models/cv/ppo_voltflow_fold3_seed4.zip` (best fold3 PnL, Gate 3 verified)
 
-**Use the Kaggle "Energy Consumption, Generation, Prices and Weather"
-(Spain) dataset only** — not CityLearn (wrong shape: multi-building
-demand-response, not single-BESS arbitrage).
+**Documentation:**
+- **[TECHNICAL.md](./TECHNICAL.md)** - Complete mathematical specification & implementation details
+- **[STATUS.md](./STATUS.md)** - Project progress, known deviations, and remaining tasks
+- **[results/README.md](./results/README.md)** - Benchmark results and cross-validation summary
 
-https://www.kaggle.com/datasets/nicholasjhana/energy-consumption-generation-prices-and-weather
+## Quick Start
 
-Two ways to populate `data/raw/energy_weather_spain.csv`:
+### 1. Prerequisites
+- Rust stable 1.78+ (`rustup install stable`)
+- Python 3.10 or 3.11 (not 3.12+)
+- Node.js 18+ (for dashboard)
 
-**Option A — real data (recommended before real training):**
+### 2. Dataset Setup
+
+Use the Kaggle ["Energy Consumption, Generation, Prices and Weather" (Spain)](https://www.kaggle.com/datasets/nicholasjhana/energy-consumption-generation-prices-and-weather) dataset:
+
 ```bash
+# Option A: Real data (recommended)
 uv pip install kaggle pandas
-# Place your Kaggle API token at ~/.kaggle/kaggle.json first
-python python/voltflow/scripts/download_data.py
-```
+python python/voltflow/scripts/download_data.py  # Requires Kaggle API token
 
-**Option B — synthetic placeholder (for testing the pipeline only):**
-```bash
+# Option B: Synthetic placeholder (testing only)
 python python/voltflow/scripts/generate_synthetic_data.py --days 90
 ```
-A synthetic CSV is already included in this delivery so you can test the
-pipeline immediately without Kaggle access. Swap in the real data before
-trusting any training results.
 
-Either way the loader expects these columns (see
-`crates/voltflow_core/src/data/loader.rs` for accepted aliases):
-`timestamp, price_eur_mwh, ambient_temp_c, solar_irradiance`
-
-## 2. Rust core
-
-Requires Rust stable 1.78+ (`rustup install stable`).
+### 3. Build & Test
 
 ```bash
+# Rust core engine
 cd crates/voltflow_core
-cargo test        # unit tests — confirmed passing (17/17) on reference hardware
-cargo bench       # Gate 1: verify >2M steps/sec across 4 threads
-cd ../..
-```
+cargo test        # 17/17 tests passing
+cargo bench       # Gate 1 verification
 
-If `cargo test` fails with something like `the configured Python
-interpreter version (3.14) is newer than PyO3's maximum supported version`,
-your system's default `python3` on `PATH` is newer than pyo3 supports, and
-cargo picked that up instead of the venv from step 3. Set up the venv
-first (step 3 below), then:
-```bash
-export PYO3_PYTHON=$(pwd)/.venv/bin/python3
-cargo clean
-cargo test
-```
-Keep `PYO3_PYTHON` exported for the rest of your session.
-
-## 3. Python environment + maturin build (using `uv`)
-
-Requires Python 3.10 or 3.11 (not 3.12+ — some pinned deps may lack wheels
-for newer Python versions).
-
-Install `uv` if you don't have it:
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-Create and activate the venv:
-```bash
+# Python environment
 uv venv --python 3.11 .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
-python3 --version                # confirm this really is 3.11
-```
-If you don't have a 3.11 interpreter available at all, `uv` can fetch one:
-```bash
-uv python install 3.11
-```
-
-Install dependencies and build the Rust extension into this venv:
-```bash
+source .venv/bin/activate
 uv pip install -r requirements.txt
 uv pip install maturin
-
-# If you hit the PyO3/Python-version error from step 2, set this first:
-export PYO3_PYTHON=$(pwd)/.venv/bin/python3
-
+export PYO3_PYTHON=$(pwd)/.venv/bin/python3  # If PyO3 version mismatch
 maturin develop --release
-```
 
-Smoke test the environment:
-```bash
+# Smoke test
 python -c "
 from voltflow.envs.gym_wrapper import VoltFlowEnv
 env = VoltFlowEnv('data/raw/energy_weather_spain.csv', max_steps=96)
@@ -118,50 +65,74 @@ print('reward:', reward, 'info:', info)
 "
 ```
 
-## 4. Train
+### 4. Train & Benchmark
 
 ```bash
-# Smoke test first (a few minutes):
-python -m voltflow.models.train_ppo --timesteps 50000 --n-envs 2
-
-# Full run (spec Phase 4 target — expect hours on CPU):
+# Full PPO training (expect hours on CPU)
 python -m voltflow.models.train_ppo --timesteps 2000000 --n-envs 4 \
     --out models/ppo_voltflow
-```
 
-## 5. Benchmark (Gate 4)
+# Cross-validation sweep (3 folds × 5 seeds)
+python python/voltflow/scripts/run_cv_sweep.py \
+    --csv data/raw/energy_weather_spain.csv
 
-```bash
+# Single benchmark
 python python/voltflow/scripts/run_benchmarks.py \
     --csv data/raw/energy_weather_spain.csv \
-    --ppo-model models/ppo_voltflow.zip
+    --ppo-model models/cv/ppo_voltflow_fold3_seed4.zip
 ```
-Writes `benchmark_results.md` with a Heuristic-vs-RL PnL comparison table.
 
-## 6. Live dashboard
+### 5. Live Dashboard
 
-Terminal 1 — telemetry backend (from repo root, venv activated):
 ```bash
+# Terminal 1: Telemetry backend
 export VOLTFLOW_CSV_PATH=data/raw/energy_weather_spain.csv
-export VOLTFLOW_PPO_MODEL=models/ppo_voltflow.zip   # optional, falls back to idle policy
+export VOLTFLOW_PPO_MODEL=models/cv/ppo_voltflow_fold3_seed4.zip
 uvicorn voltflow.server.app:app --reload --port 8000 --app-dir python
-```
-Note the `--app-dir python` — the `voltflow` package lives under
-`python/voltflow/`, not the repo root, so uvicorn needs to be told where to
-find it (alternatively, `pip install -e .` the package once and drop this
-flag).
 
-Terminal 2 — frontend:
-```bash
+# Terminal 2: Frontend
 cd ui
 npm install
 npm run dev
 ```
-Open http://localhost:3000 — should show a live-updating dashboard once
-both are running.
 
-## Locked versions
+Open http://localhost:3000 for live telemetry dashboard.
 
-See `Cargo.toml` / `crates/voltflow_core/Cargo.toml` / `requirements.txt`
-for exact pinned versions — don't drift from these without checking ABI
-compatibility (PyO3 in particular is version-sensitive).
+## Project Structure
+
+```
+voltflow/
+├── Cargo.toml                  # Rust workspace root
+├── pyproject.toml              # maturin build config
+├── requirements.txt
+├── README.md                   # This file
+├── TECHNICAL.md                # Mathematical specification & implementation
+├── STATUS.md                   # Progress & remaining tasks
+├── data/
+│   └── raw/
+│       └── energy_weather_spain.csv   # Market/weather dataset
+├── crates/voltflow_core/       # Rust simulation engine
+├── python/voltflow/            # Python package (env, training, server)
+├── ui/                         # Next.js dashboard (Tailwind + Recharts)
+└── results/                    # Benchmark results & CV summaries
+```
+
+## Key Results
+
+**Walk-forward Cross-Validation (3 folds × 5 seeds = 15 runs):**
+- **100% success rate** - PPO beats both heuristics on every run
+- **Worst case:** +136.8% improvement over best heuristic
+- **Best case:** +476.4% improvement over best heuristic
+- **Overall mean:** $359.44 ± $55.05 net PnL
+
+**Gate 3 Verification:**
+- Mean action above 75th percentile price: -0.9676 (near-max discharge)
+- Mean action below 75th percentile: -0.2885  
+- Only 0.3% of above-threshold steps show any charging
+
+## License & Citation
+
+This project implements the VoltFlow specification for autonomous BESS management. For commercial use or academic citation, please refer to the technical documentation.
+
+---
+*See [TECHNICAL.md](./TECHNICAL.md) for complete mathematical specification and implementation details.*

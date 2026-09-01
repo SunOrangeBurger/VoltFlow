@@ -1,4 +1,4 @@
-//! Lumped-capacitance thermal dynamics model (spec section 4.2).
+//! Lumped-capacitance thermal dynamics model (TECHNICAL.md section 4.2).
 
 #[derive(Debug, Clone, Copy)]
 pub struct ThermalParams {

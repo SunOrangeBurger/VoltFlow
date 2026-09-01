@@ -1,4 +1,4 @@
-//! Coulomb counting & inverter efficiency model (spec section 4.1).
+//! Coulomb counting & inverter efficiency model (TECHNICAL.md section 4.1).
 
 /// Fixed simulation parameters for the cell/power-conversion model.
 #[derive(Debug, Clone, Copy)]
@@ -25,7 +25,7 @@ impl Default for CellParams {
 }
 
 /// Computes P_eff from the requested action power, applying inverter losses
-/// asymmetrically for charge vs. discharge (spec eq. 4.1).
+/// asymmetrically for charge vs. discharge (TECHNICAL.md equation 4.1).
 #[inline]
 pub fn effective_power_kw(p_action_kw: f32, eta_inverter: f32) -> f32 {
     let eta_safe = eta_inverter.max(1e-6);
@@ -59,7 +59,7 @@ mod tests {
 
     #[test]
     fn gate2_electrochemical_sanity_1c_1hr() {
-        // RESOLVED (see progress.md "Known Spec Deviations" for full writeup):
+        // RESOLVED (see STATUS.md "Known Specification Deviations" for full writeup):
         // Gate 2's prose ("~96%") was checked against the physics, not just
         // the charge-branch arithmetic it happened to match.
         //

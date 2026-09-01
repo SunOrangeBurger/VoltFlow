@@ -49,7 +49,7 @@ def main():
     parser.add_argument("--seed", type=int, default=123,
                          help="Eval env seed. Independent of whatever seed "
                               "the PPO model was trained with.")
-    parser.add_argument("--out", type=str, default="benchmark_results.md")
+    parser.add_argument("--out", type=str, default="results/benchmark_results.md")
     args = parser.parse_args()
 
     max_steps = args.days * 96  # 96 steps/day at 15-min resolution

@@ -32,7 +32,7 @@ from stable_baselines3 import PPO
 
 from voltflow.envs.gym_wrapper import VoltFlowEnv
 
-# Must match spec section 5.1's obs[4] normalization exactly:
+# Must match TECHNICAL.md section 5.1's obs[4] normalization exactly:
 #   obs4 = (clamp(price, -50, 300) + 50) / 350.0
 PRICE_CLAMP_MIN = -50.0
 PRICE_CLAMP_MAX = 300.0

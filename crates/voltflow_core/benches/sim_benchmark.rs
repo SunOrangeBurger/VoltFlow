@@ -1,5 +1,5 @@
 //! Gate 1: verifies simulation throughput exceeds 2,000,000 steps/second
-//! across 4 parallel threads (spec section 7).
+//! across 4 parallel threads (TECHNICAL.md section 7).
 //!
 //! Run with: cargo bench
 

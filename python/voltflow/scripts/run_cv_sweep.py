@@ -70,7 +70,7 @@ def main():
     parser.add_argument("--models-dir", type=str, default="models/cv")
     parser.add_argument("--logs-dir", type=str, default="logs/cv")
     parser.add_argument("--results-dir", type=str, default="results/cv")
-    parser.add_argument("--out", type=str, default="benchmark_results_cv_summary.md")
+    parser.add_argument("--out", type=str, default="results/benchmark_results_cv_summary.md")
     args = parser.parse_args()
 
     os.makedirs(args.models_dir, exist_ok=True)
