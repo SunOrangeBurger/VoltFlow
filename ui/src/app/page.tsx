@@ -4,6 +4,7 @@ import { useSimulationSocket } from "@/hooks/useSimulationSocket";
 import { BatteryGauge } from "@/components/BatteryGauge";
 import { MetricsGrid } from "@/components/MetricsGrid";
 import { LiveChart } from "@/components/LiveChart";
+import { ComparisonPanel } from "@/components/ComparisonPanel";
 
 export default function DashboardPage() {
   const { connected, latest, history } = useSimulationSocket();
@@ -16,6 +17,12 @@ export default function DashboardPage() {
           <p className="text-sm text-substation-muted">
             Autonomous BESS arbitrage &amp; degradation dispatch — live telemetry
           </p>
+          {latest?.policy_label && (
+            <p className="mt-1 text-xs text-substation-muted">
+              Driving policy:{" "}
+              <span className="font-mono text-substation-text">{latest.policy_label}</span>
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <span
@@ -40,10 +47,19 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      <div className="mt-6">
+        <ComparisonPanel
+          strategies={latest?.strategies ?? null}
+          policyLabel={latest?.policy_label ?? null}
+          liveImprovementPct={latest?.live_improvement_pct ?? null}
+          startupSelection={latest?.startup_selection ?? null}
+        />
+      </div>
+
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
         <LiveChart
           history={history}
-          title="Cumulative PnL"
+          title="Cumulative PnL (PPO)"
           dataKey="cumulative_pnl"
           color="#4CAF7D"
           unit="$"
@@ -73,8 +89,11 @@ export default function DashboardPage() {
       <footer className="mt-10 border-t border-substation-border pt-4 text-xs text-substation-muted">
         Start the telemetry backend with{" "}
         <code className="rounded bg-substation-panel px-1.5 py-0.5">
-          uvicorn voltflow.server.app:app --port 8000
+          uvicorn voltflow.server.app:app --port 8000 --app-dir python
         </code>
+        . See <code className="rounded bg-substation-panel px-1.5 py-0.5">README.md</code> for
+        the full startup sequence, or run{" "}
+        <code className="rounded bg-substation-panel px-1.5 py-0.5">./start_dashboard.sh</code>.
       </footer>
     </main>
   );

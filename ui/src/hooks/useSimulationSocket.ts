@@ -2,18 +2,65 @@
 
 import { useEffect, useRef, useState } from "react";
 
-export interface TelemetryFrame {
-  step: number;
+export interface StrategyFrame {
   soc: number;
   soh: number;
-  t_cell_k: number;
   t_cell_c: number;
   price: number;
   revenue: number;
   degradation_cost: number;
-  thermal_penalty: number;
+  thermal_penalty: number | null;
+  thermal_interlock_active: boolean | null;
+  cumulative_revenue: number;
+  cumulative_degradation: number;
   cumulative_pnl: number;
   reward: number;
+}
+
+export interface CheckpointCandidate {
+  path: string;
+  label: string;
+  eval_csv: string;
+  net_pnl_mean: number;
+  net_pnl_std: number;
+  revenue_mean: number;
+  degradation_mean: number;
+  best_heuristic_pnl: number;
+  improvement_pct: number;
+  error: string | null;
+}
+
+export interface StartupSelection {
+  winner: string | null;
+  winner_label: string | null;
+  winner_net_pnl: number | null;
+  winner_improvement_pct: number | null;
+  candidates: CheckpointCandidate[];
+}
+
+export interface TelemetryFrame {
+  step: number;
+  policy_label: string;
+  // Top-level fields mirror the "ppo" strategy for convenience/back-compat.
+  soc: number;
+  soh: number;
+  t_cell_k?: number;
+  t_cell_c: number;
+  price: number;
+  revenue: number;
+  degradation_cost: number;
+  thermal_penalty: number | null;
+  cumulative_revenue: number;
+  cumulative_degradation: number;
+  cumulative_pnl: number;
+  reward: number;
+  strategies: {
+    ppo: StrategyFrame;
+    threshold: StrategyFrame;
+    tou: StrategyFrame;
+  };
+  live_improvement_pct: number | null;
+  startup_selection: StartupSelection | null;
 }
 
 interface SocketState {

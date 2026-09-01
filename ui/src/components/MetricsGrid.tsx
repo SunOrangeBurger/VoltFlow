@@ -39,35 +39,38 @@ function Tile({
 
 export function MetricsGrid({ frame }: MetricsGridProps) {
   const pnl = frame?.cumulative_pnl ?? 0;
+  const revenue = frame?.cumulative_revenue ?? 0;
+  const degradation = frame?.cumulative_degradation ?? 0;
   const price = frame?.price ?? 0;
 
   return (
     <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
       <Tile
-        label="Cumulative PnL"
+        label="Net PnL (this episode)"
         value={pnl.toFixed(2)}
         unit="$"
         tone={pnl >= 0 ? "positive" : "negative"}
         icon={pnl >= 0 ? <TrendingUp size={16} /> : <TrendingDown size={16} />}
       />
       <Tile
+        label="Net Revenue"
+        value={revenue.toFixed(2)}
+        unit="$"
+        tone="positive"
+        icon={<TrendingUp size={16} />}
+      />
+      <Tile
+        label="Net Cost (degradation)"
+        value={degradation.toFixed(2)}
+        unit="$"
+        icon={<TrendingDown size={16} />}
+        tone="negative"
+      />
+      <Tile
         label="Spot Price"
         value={price.toFixed(2)}
         unit="$/MWh"
         icon={<Zap size={16} />}
-      />
-      <Tile
-        label="Step Reward"
-        value={(frame?.reward ?? 0).toFixed(4)}
-        icon={<Gauge size={16} />}
-        tone={(frame?.reward ?? 0) >= 0 ? "positive" : "negative"}
-      />
-      <Tile
-        label="Degradation Cost"
-        value={(frame?.degradation_cost ?? 0).toFixed(4)}
-        unit="$"
-        icon={<TrendingDown size={16} />}
-        tone="negative"
       />
     </div>
   );
