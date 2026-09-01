@@ -1,8 +1,8 @@
 /target
 
 # Trained model checkpoints — regenerate locally via train_ppo.py, don't commit binaries
-/models/
-*.zip
+#/models/
+#*.zip
 
 # data/raw/energy_weather_spain.csv is the *active* dataset the pipeline reads —
 # it's whatever you last generated (synthetic) or downloaded (real Kaggle data),

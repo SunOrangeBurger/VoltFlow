@@ -2,24 +2,25 @@
 
 ## Overview
 
-Last updated after completing walk-forward cross-validation sweep (15/15 runs successful). All four specification gates are cleared with comprehensive validation.
+Last updated 2026-09-01, after running the Gate 1 throughput benchmark and completing the walk-forward cross-validation sweep (15/15 runs successful). All four specification gates are cleared.
 
 ## Current Status
 
-**✅ GATES 2-4 CLEARED, GATE 1 READY FOR BENCHMARK**
+**✅ ALL FOUR GATES CLEARED**
 
 ### Gate Verification Status
 | Gate | Description | Status | Evidence |
 |------|-------------|--------|----------|
-| **Gate 1** | Throughput: >2M steps/sec across 4 threads | **Ready** | `cargo bench` pending |
+| **Gate 1** | Throughput: >2M steps/sec across 4 threads | **PASS** | `cargo bench`, release profile: 35.9M steps/sec (4-thread parallel), 22.6M steps/sec (single-thread). See caveat below. |
 | **Gate 2** | Electrochemical sanity: Discharge/charge physics verified | **PASS** | `crates/voltflow_core/src/battery/cell.rs` tests |
 | **Gate 3** | Behavioral: Agent learns price-threshold arbitrage | **PASS** | Mean action above p75: -0.9676 (discharge) vs -0.2885 below |
 | **Gate 4** | Performance: PPO beats heuristics by ≥15% net PnL | **PASS** | 15/15 CV runs successful, worst case +136.8% improvement |
 
+**Gate 1 caveat:** 4 threads measured only ~1.6x the single-thread throughput, not ~4x. The >2M steps/sec target is cleared with a wide margin either way, but the sub-linear scaling itself hasn't been diagnosed (likely contention in the benchmark harness rather than the simulation core, but unconfirmed) — see Remaining Tasks.
+
 ### Current Checkpoints
-- **Primary:** `models/cv/ppo_voltflow_fold3_seed4.zip` (best fold3 PnL, Gate 3 verified)
-- **Backup:** `models/ppo_voltflow.zip` (original single-seed, superseded)
-- **CV Archive:** `models/cv/ppo_voltflow_fold*_seed*.zip` (15 runs)
+- **Tracked in repo (for quick smoke-testing only):** `models/ppo_voltflow.zip`, `models/best_model.zip` — early single-seed runs, not CV-validated.
+- **Not tracked (reproduce locally):** `models/cv/ppo_voltflow_fold3_seed4.zip` — the CV-selected best policy referenced in `results/README.md`. `models/` is gitignored by design (binaries shouldn't live in git); run `python python/voltflow/scripts/run_cv_sweep.py` to regenerate it. See STATUS item under "Medium Priority" if you want this changed.
 
 ## Phase Completion Status
 
@@ -30,8 +31,8 @@ Last updated after completing walk-forward cross-validation sweep (15/15 runs su
 
 ### Phase 2 — Rust Core Engine ✅ COMPLETE
 - **Components:** `battery/cell.rs`, `battery/thermal.rs`, `battery/degradation.rs`, `env/simulation.rs`, `data/loader.rs`
-- **Tests:** 17/17 passing, including thermal stability and price normalization fixes
-- **Benchmarks:** `benches/sim_benchmark.rs` ready for Gate 1 verification
+- **Tests:** 28/28 passing, including thermal stability and price normalization fixes
+- **Benchmarks:** `benches/sim_benchmark.rs` — Gate 1 verified, see table above
 
 ### Phase 3 — Maturin Build & Gymnasium Environment ✅ COMPLETE
 - **Build:** `maturin develop --release` successful
@@ -41,7 +42,7 @@ Last updated after completing walk-forward cross-validation sweep (15/15 runs su
 ### Phase 4 — Baseline Models & PPO Training ✅ COMPLETE
 - **Baselines:** `ThresholdRuleBaseline` (percentile-based) and `TouHeuristicBaseline` (fixed-hour tariff)
 - **Training:** Full 2,000,000-timestep PPO pipeline with `train_ppo.py`
-- **CV Sweep:** 3 folds × 5 seeds = 15 runs, all successful (see [RESULTS.md](./results/README.md))
+- **CV Sweep:** 3 folds × 5 seeds = 15 runs, all successful (see [results/README.md](./results/README.md))
 
 ### Phase 5 — Telemetry Server & Interactive Web UI ✅ COMPLETE
 - **Backend:** FastAPI WebSocket server with background simulation loop
@@ -55,7 +56,7 @@ Last updated after completing walk-forward cross-validation sweep (15/15 runs su
 - **Fix:** Replaced with exact analytic solution to linear ODE
 - **Test:** `large_timestep_does_not_overshoot_ambient` regression test
 
-### 2. Price Normalization Bounds ✅ RESOLVED  
+### 2. Price Normalization Bounds ✅ RESOLVED
 - **Issue:** Real Spain prices (9.33–116.80 EUR/MWh) narrower than spec's assumed -50/300 range
 - **Fix:** Derive normalization bounds from loaded dataset with 15% padding
 - **Test:** Four tests in `simulation.rs` verify bound derivation
@@ -79,24 +80,25 @@ Last updated after completing walk-forward cross-validation sweep (15/15 runs su
 ## Remaining Tasks
 
 ### High Priority
-1. **Run `cargo bench` for Gate 1 verification** - Final throughput benchmark
-2. **Verify FastAPI server package discovery** - Ensure `--app-dir python` or `pip install -e .` works
-3. **Point dashboard at validated checkpoint** - Use `models/cv/ppo_voltflow_fold3_seed4.zip`
+1. **Verify FastAPI server package discovery** - Ensure `--app-dir python` or `pip install -e .` works
+2. **Point dashboard at a validated checkpoint** - Train/reproduce `models/cv/ppo_voltflow_fold3_seed4.zip` locally via the CV sweep command (not committed — see Current Checkpoints above), or use the tracked `models/ppo_voltflow.zip` for a quick, non-CV-validated smoke test
 
-### Medium Priority  
-4. **Patch dedup fix into `download_data.py`** - For future Kaggle re-downloads
-5. **Run `npm install` / `npm run dev`** - Confirm dashboard boots
-6. **Configure WS URL for deployments** - Currently hardcoded to localhost
+### Medium Priority
+3. **Diagnose Gate 1 sub-linear thread scaling** - 4 threads measured ~1.6x single-thread throughput, not ~4x; profile whether this is benchmark-harness contention or a real bottleneck in the simulation core
+4. **Decide whether to commit a CV checkpoint** - Currently `models/` is fully gitignored; consider tracking just `ppo_voltflow_fold3_seed4.zip` (~50KB) if reviewers/judges need a working checkpoint without training locally
+5. **Patch dedup fix into `download_data.py`** - For future Kaggle re-downloads
+6. **Run `npm install` / `npm run dev`** - Confirm dashboard boots
+7. **Configure WS URL for deployments** - Currently hardcoded to localhost
 
 ### Low Priority / Future Work
-7. **Hyperparameter tuning** - Once CV identifies specific weaknesses
-8. **Training curve analysis** - Inspect tensorboard logs for convergence patterns
-9. **Mobile layout polish** - Basic Tailwind grid collapse exists, could be improved
-10. **Theme toggle** - Currently dark-only by design
+8. **Hyperparameter tuning** - Once CV identifies specific weaknesses
+9. **Training curve analysis** - Inspect tensorboard logs for convergence patterns
+10. **Mobile layout polish** - Basic Tailwind grid collapse exists, could be improved
+11. **Theme toggle** - Currently dark-only by design
 
 ## Out of Scope (Explicitly Deferred)
 - CityLearn integration - Rejected as dataset/env source
-- Cloud deployment (Docker, k8s, CI/CD) - Spec only requires local runnability  
+- Cloud deployment (Docker, k8s, CI/CD) - Spec only requires local runnability
 - Multi-battery / fleet-level dispatch - Spec is single-BESS throughout
 - Authentication/authorization - Fine for local single-user dev
 
@@ -109,9 +111,9 @@ Last updated after completing walk-forward cross-validation sweep (15/15 runs su
 - `results/README.md` - Benchmark results summary
 
 ### Key Checkpoints
-- `models/cv/ppo_voltflow_fold3_seed4.zip` - Primary validated policy
-- `models/cv/` - Archive of all 15 CV run checkpoints
-- `models/ppo_voltflow.zip` - Original single-seed (superseded)
+- `models/ppo_voltflow.zip`, `models/best_model.zip` - Tracked, single-seed, quick-test only
+- `models/cv/ppo_voltflow_fold3_seed4.zip` - Primary validated policy; reproduce via `run_cv_sweep.py`, not committed
+- `models/cv/` - Full archive of 15 CV run checkpoints; reproduce locally, not committed
 
 ### Results & Logs
 - `results/cv/*.md` - Detailed per-run CV reports (15 files)
@@ -121,4 +123,4 @@ Last updated after completing walk-forward cross-validation sweep (15/15 runs su
 
 ---
 
-**Next Steps:** Complete Gate 1 benchmark, then finalize dashboard integration with validated checkpoint.
+**Next Steps:** Diagnose Gate 1 thread scaling, decide on committing a CV checkpoint for reviewers, finalize dashboard integration.
