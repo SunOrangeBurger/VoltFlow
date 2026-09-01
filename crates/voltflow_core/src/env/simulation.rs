@@ -5,7 +5,10 @@
 
 use crate::battery::cell::{clamp_soc, delta_soc, effective_power_kw, CellParams};
 use crate::battery::degradation::{total_delta_soh, DegradationParams};
-use crate::battery::thermal::{heat_generated_w, step_temperature, ThermalParams};
+use crate::battery::thermal::{
+    heat_generated_w, max_p_eff_kw_for_heat_limit, max_q_gen_w_for_t_crit, step_temperature,
+    ThermalParams,
+};
 use crate::data::loader::MarketData;
 use crate::env::stochastic::OuNoise;
 use rand::rngs::StdRng;
@@ -39,6 +42,12 @@ pub struct StepInfo {
     pub soh: f32,
     pub t_cell: f32,
     pub price: f32,
+    // True if the hard thermal interlock reduced the requested power this
+    // step because the unclamped action was predicted to push t_cell past
+    // t_crit (STATUS.md deviation #6). Distinct from thermal_penalty > 0.0
+    // (which can still fire on the interlock's own clamped-but-nonzero
+    // residual, or from stale t_cell carried over from a prior step).
+    pub thermal_interlock_active: bool,
 }
 
 pub struct BessSimulation {
@@ -267,7 +276,49 @@ impl BessSimulation {
         let p_action_kw = action_clamped * self.cell_params.max_power_kw;
 
         // --- 4.1: Coulomb counting & inverter efficiency ---
-        let p_eff = effective_power_kw(p_action_kw, self.cell_params.inverter_eta);
+        let p_eff_requested = effective_power_kw(p_action_kw, self.cell_params.inverter_eta);
+
+        // Ambient temp for this step is needed up front now, since the
+        // thermal interlock below has to predict this step's temperature
+        // *before* committing to a power level. temp_noise is stepped here
+        // (same relative order vs. price_noise as before the interlock was
+        // added) so the RNG stream stays deterministic.
+        let idx = self.current_market_idx();
+        let t_ambient_base = self.market.ambient_temps_k[idx];
+        let t_ambient = t_ambient_base + self.temp_noise.step(self.cell_params.dt_hours, &mut self.rng);
+
+        // --- 4.1b: Hard thermal interlock (predict-then-clamp) ---
+        // Physically caps |P_eff| so the *predicted* post-step temperature
+        // can't exceed t_crit, the same enforcement pattern clamp_soc
+        // already applies at the SoC boundary, rather than relying solely
+        // on the kappa*(T-T_crit)^2 reward penalty to discourage it after
+        // the fact. See STATUS.md deviation #6. Heat generation (I^2*R) is
+        // sign-agnostic, so the cap applies to |P_eff| and the original
+        // charge/discharge sign is re-applied.
+        let q_max_w = max_q_gen_w_for_t_crit(
+            self.t_cell,
+            t_ambient,
+            &self.thermal_params,
+            self.cell_params.dt_hours,
+            self.financial_params.t_crit,
+        );
+        let q_requested_w = heat_generated_w(
+            p_eff_requested,
+            self.thermal_params.v_nominal,
+            self.thermal_params.r_internal,
+        );
+        let thermal_interlock_active = q_requested_w > q_max_w;
+        let p_eff = if thermal_interlock_active {
+            let p_eff_limit_kw = max_p_eff_kw_for_heat_limit(
+                q_max_w,
+                self.thermal_params.v_nominal,
+                self.thermal_params.r_internal,
+            );
+            p_eff_requested.signum() * p_eff_limit_kw
+        } else {
+            p_eff_requested
+        };
+
         let dsoc = delta_soc(
             p_eff,
             self.cell_params.dt_hours,
@@ -281,14 +332,14 @@ impl BessSimulation {
             self.cell_params.soc_max,
         );
         // Actual delivered/absorbed power may be less than requested if SoC
-        // clamps the action (hit soc_min/soc_max boundary).
+        // clamps the action (hit soc_min/soc_max boundary) and/or if the
+        // thermal interlock above already reduced p_eff.
         let actual_dsoc = self.soc - soc_before;
 
         // --- 4.2: Thermal dynamics ---
-        let idx = self.current_market_idx();
-        let t_ambient_base = self.market.ambient_temps_k[idx];
-        let t_ambient = t_ambient_base + self.temp_noise.step(self.cell_params.dt_hours, &mut self.rng);
-
+        // Recomputed from the (possibly interlock-clamped) p_eff, so this
+        // should now land at or under t_crit rather than merely being
+        // penalized for exceeding it.
         let q_gen = heat_generated_w(p_eff, self.thermal_params.v_nominal, self.thermal_params.r_internal);
         self.t_cell = step_temperature(
             self.t_cell,
@@ -351,6 +402,7 @@ impl BessSimulation {
             soh: self.soh,
             t_cell: self.t_cell,
             price,
+            thermal_interlock_active,
         };
 
         (obs, reward, terminated, truncated, info)

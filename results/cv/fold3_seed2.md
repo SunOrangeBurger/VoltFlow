@@ -4,6 +4,6 @@
 |---|---|---|---|---|---|
 | Threshold Rule Heuristic | 39.49±1.15 | 43.54±1.15 | 4.04±0.01 | 1.0000 | 0.3949±0.0115 |
 | TOU Heuristic | 120.40±6.94 | 127.08±6.91 | 6.67±0.04 | 1.0000 | 1.2040±0.0694 |
-| VoltFlow RL (PPO) | 285.10±4.73 | 298.79±4.66 | 13.70±0.13 | 0.9999 | 2.8510±0.0473 |
+| VoltFlow RL (PPO) | 337.00±4.17 | 349.58±4.12 | 12.59±0.12 | 0.9999 | 3.3700±0.0417 |
 
-**RL vs. best heuristic net PnL improvement: 136.8%** (Gate target: >= 15%, mean over 5 held-out episodes)
+**RL vs. best heuristic net PnL improvement: 179.9%** (Gate target: >= 15%, mean over 5 held-out episodes)

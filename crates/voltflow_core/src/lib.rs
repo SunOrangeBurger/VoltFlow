@@ -55,6 +55,7 @@ impl RustBessEnv {
         info_dict.set_item("soh", info.soh)?;
         info_dict.set_item("t_cell_k", info.t_cell)?;
         info_dict.set_item("price", info.price)?;
+        info_dict.set_item("thermal_interlock_active", info.thermal_interlock_active)?;
 
         Ok((obs.to_vec(), reward, terminated, truncated, info_dict.into()))
     }
