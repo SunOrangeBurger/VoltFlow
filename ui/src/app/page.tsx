@@ -5,6 +5,7 @@ import { BatteryGauge } from "@/components/BatteryGauge";
 import { MetricsGrid } from "@/components/MetricsGrid";
 import { LiveChart } from "@/components/LiveChart";
 import { ComparisonPanel } from "@/components/ComparisonPanel";
+import { DayNightClock } from "@/components/DayNightClock";
 
 export default function DashboardPage() {
   const { connected, latest, history } = useSimulationSocket();
@@ -35,11 +36,15 @@ export default function DashboardPage() {
       </header>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        <div className="lg:col-span-1">
+        <div className="flex flex-col gap-6 lg:col-span-1">
           <BatteryGauge
             soc={latest?.soc ?? 0.5}
             soh={latest?.soh ?? 1.0}
             tCellC={latest?.t_cell_c ?? 25.0}
+          />
+          <DayNightClock
+            hourOfDay={latest?.hour_of_day ?? 12.0}
+            timeOfDay={latest?.time_of_day ?? "--:-- --"}
           />
         </div>
         <div className="lg:col-span-2">

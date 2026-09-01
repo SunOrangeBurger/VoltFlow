@@ -41,6 +41,8 @@ export interface StartupSelection {
 export interface TelemetryFrame {
   step: number;
   policy_label: string;
+  hour_of_day: number;
+  time_of_day: string;
   // Top-level fields mirror the "ppo" strategy for convenience/back-compat.
   soc: number;
   soh: number;

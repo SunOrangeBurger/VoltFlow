@@ -119,6 +119,25 @@ async def _simulation_loop():
         "tou": TouHeuristicBaseline(),
     }
 
+    def _hour_of_day(observation: np.ndarray) -> float:
+        """Decodes hour-of-day (0.0-24.0, fractional) from the sin/cos hour
+        angle encoded at observation indices 6/7 (see TECHNICAL.md 5.1) —
+        same decoding ThresholdRuleBaseline/TouHeuristicBaseline use
+        internally, exposed here for the dashboard clock."""
+        sin_h, cos_h = float(observation[6]), float(observation[7])
+        angle = np.arctan2(sin_h, cos_h)
+        hour = (angle / (2 * np.pi)) * 24.0
+        return float(hour % 24.0)
+
+    def _format_clock(hour: float) -> str:
+        h = int(hour) % 24
+        m = int(round((hour - int(hour)) * 60)) % 60
+        period = "AM" if h < 12 else "PM"
+        h12 = h % 12
+        if h12 == 0:
+            h12 = 12
+        return f"{h12:02d}:{m:02d} {period}"
+
     episode_seed = 7
 
     def make_envs(seed: int):
@@ -171,6 +190,8 @@ async def _simulation_loop():
 
         step_count += 1
 
+        hour_of_day = _hour_of_day(obs["ppo"])
+
         best_heuristic_pnl = max(
             cumulative["threshold"]["pnl"], cumulative["tou"]["pnl"]
         )
@@ -184,6 +205,8 @@ async def _simulation_loop():
         payload = {
             "step": step_count,
             "policy_label": _policy_label or "idle (no PPO checkpoint loaded)",
+            "hour_of_day": hour_of_day,
+            "time_of_day": _format_clock(hour_of_day),
             # top-level fields mirror the PPO strategy for backward
             # compatibility with any client only reading flat fields.
             **{k: v for k, v in frame_by_strategy["ppo"].items() if k not in ("term", "trunc")},
