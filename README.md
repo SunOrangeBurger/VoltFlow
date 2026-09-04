@@ -105,9 +105,10 @@ npm run dev
 
 or
 
-'''bash
-    ./start_dashboard
-'''
+```bash
+./start_dashboard
+```
+
 
 Open http://localhost:3000 for live telemetry dashboard.
 
